@@ -1,0 +1,10 @@
+name = Raven
+name_en = Raven
+kind = app
+category = tool
+catalog_scope = community
+entry = main.lua
+allow_webui = true
+icon = main.png
+description = Raven portrait and live status display
+version = 0.2.0

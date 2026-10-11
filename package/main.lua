@@ -5,7 +5,7 @@ local function start_app()
   if previous and previous.stop then previous.stop() end
 
   local APP = {
-    version = "0.2.0",
+    version = "0.3.1",
     status = "idle",
     progress = nil,
     updates = 0,
@@ -15,7 +15,9 @@ local function start_app()
     animation_running = false,
     animation_ticks = 0,
     animation_phase = 0,
-    pose = { x = 52, y = 0 },
+    snapshot_active = false,
+    blink_opacity = 0,
+    pose = { x = 52, y = 1 },
   }
   _G[APP_KEY] = APP
 
@@ -25,6 +27,8 @@ local function start_app()
   local MAIN = LV_PART_MAIN | LV_STATE_DEFAULT
   local IDLE_PERIOD_MS = 4800
   local IDLE_TICK_MS = 50
+  local IDLE_CENTER_X, IDLE_CENTER_Y = 52, 1
+  local IDLE_SWAY_PX, IDLE_BOB_PX = 24, 6
   local STATES = {
     idle = { label = "Ready", color = 0xE4B86D },
     thinking = { label = "Thinking", color = 0xFFD27F },
@@ -53,7 +57,11 @@ local function start_app()
   APP.panel = panel(root, 0, 0, 320, 240, 0x000000)
   APP.portrait = lv_img_create(APP.panel)
   lv_img_set_src(APP.portrait, "S:/apps/raven_display/raven.png")
-  lv_obj_set_pos(APP.portrait, 52, 0)
+  lv_obj_set_pos(APP.portrait, IDLE_CENTER_X, IDLE_CENTER_Y)
+  APP.eyelids = lv_img_create(APP.portrait)
+  lv_img_set_src(APP.eyelids, "S:/apps/raven_display/raven-blink.png")
+  lv_obj_set_pos(APP.eyelids, 72, 68)
+  lv_obj_set_style_img_opa(APP.eyelids, 0, MAIN)
 
   local function sparkle(x, y, size)
     local object = panel(APP.panel, x, y, size + 1, size + 1, 0x000000)
@@ -70,7 +78,7 @@ local function start_app()
     lv_obj_set_style_line_width(outline, 1, MAIN)
     panel(object, center, center, 1, 1, 0xFFF0CB)
     lv_obj_set_style_opa(object, 0, MAIN)
-    return { object = object, y = y }
+    return { object = object, x = x, y = y }
   end
   APP.sparkles = { sparkle(43, 66, 12), sparkle(270, 94, 10), sparkle(49, 172, 8) }
 
@@ -91,21 +99,40 @@ local function start_app()
     APP.pose.x, APP.pose.y = x, y
   end
 
+  local function set_blink(opacity)
+    if opacity == APP.blink_opacity then return end
+    lv_obj_set_style_img_opa(APP.eyelids, opacity, MAIN)
+    APP.blink_opacity = opacity
+  end
+
+  local function blink_opacity(phase_ms)
+    local elapsed = phase_ms - 3000
+    if elapsed < 0 or elapsed >= 250 then return 0 end
+    if elapsed < 50 then return round(255 * elapsed / 50) end
+    if elapsed < 150 then return 255 end
+    return round(255 * (250 - elapsed) / 100)
+  end
+
   local function render_idle(phase_ms)
     APP.animation_phase = phase_ms % IDLE_PERIOD_MS
     local phase = APP.animation_phase * math.pi * 2 / IDLE_PERIOD_MS
     local breath = (1 - math.cos(phase)) / 2
-    apply_pose(52 + round(2 * math.sin(phase)), round(-4 * breath))
+    apply_pose(IDLE_CENTER_X + round(IDLE_SWAY_PX * math.sin(phase)),
+      IDLE_CENTER_Y + round(IDLE_BOB_PX * math.sin(2 * phase)))
+    set_blink(blink_opacity(APP.animation_phase))
     for index, star in ipairs(APP.sparkles) do
       local glow = math.max(0, math.sin(phase - (index - 1) * math.pi * 2 / 3)) ^ 3
       lv_obj_set_style_opa(star.object, round(230 * glow), MAIN)
-      lv_obj_set_y(star.object, star.y - round(2 * glow))
+      lv_obj_set_pos(star.object,
+        star.x + round(5 * math.sin(phase + (index - 1) * math.pi * 2 / 3)),
+        star.y - round(6 * glow))
     end
     lv_obj_set_style_opa(APP.dot, 175 + round(80 * breath), MAIN)
   end
 
   local function reset_pose()
-    apply_pose(52, 0)
+    apply_pose(IDLE_CENTER_X, IDLE_CENTER_Y)
+    set_blink(0)
     for _, star in ipairs(APP.sparkles) do lv_obj_set_style_opa(star.object, 0, MAIN) end
     lv_obj_set_style_opa(APP.dot, 255, MAIN)
     APP.animation_phase = 0
@@ -119,7 +146,7 @@ local function start_app()
       APP.animation_started_ms = millis()
       render_idle(0)
       local started = APP.animation_timer:alarm(IDLE_TICK_MS, tmr.ALARM_AUTO, function()
-        if APP.stopped or not APP.animation_running then return end
+        if APP.stopped or APP.snapshot_active or not APP.animation_running then return end
         if app.exiting() then APP.stop() return end
         APP.animation_ticks = APP.animation_ticks + 1
         local rendered, animation_error = pcall(render_idle, millis() - APP.animation_started_ms)
@@ -179,6 +206,13 @@ local function start_app()
         phase_ms = APP.animation_phase,
         x = APP.pose.x,
         y = APP.pose.y,
+        motion = {
+          path = "figure_eight",
+          horizontal_range_px = 2 * IDLE_SWAY_PX,
+          vertical_range_px = 2 * IDLE_BOB_PX,
+        },
+        blink_opacity = APP.blink_opacity,
+        blink_keyframes_ms = { 3000, 3050, 3100, 3150, 3200, 3250 },
         error = APP.animation_error,
       },
     }
@@ -243,23 +277,45 @@ local function start_app()
       if not APP.animation_running then
         return respond("409 Conflict", { ok = false, error = "Phase capture requires idle state" })
       end
-      render_idle(phase_ms)
     end
+    local was_running = APP.animation_running
+    APP.snapshot_active = true
+    if was_running then APP.animation_timer:stop() end
+    local function resume_animation()
+      APP.snapshot_active = false
+      if was_running and APP.animation_running and not APP.stopped then
+        render_idle(millis() - APP.animation_started_ms)
+        APP.animation_timer:start()
+      end
+    end
+    if phase_ms then
+      render_idle(phase_ms)
+      -- Allow the UI task to apply the queued pose before capture.
+      sleep(80)
+    end
+    local captured_blink_opacity = APP.blink_opacity
+    local captured_x, captured_y = APP.pose.x, APP.pose.y
     local captured, snapshot, capture_error = pcall(lv_snapshot_take, APP.panel)
-    if phase_ms then render_idle(millis() - APP.animation_started_ms) end
     if not captured then
+      resume_animation()
       return respond("500 Internal Server Error", { ok = false, error = tostring(snapshot) })
     end
     if not snapshot then
+      resume_animation()
       return respond("500 Internal Server Error", { ok = false, error = tostring(capture_error) })
     end
     local path = DIRECTORY .. "/snapshot.png"
     local called, saved, save_error = pcall(lv_snapshot_save_to_png, snapshot, path)
     lv_snapshot_free(snapshot)
+    resume_animation()
     if not called or not saved then
       return respond("500 Internal Server Error", { ok = false, error = tostring(save_error or saved) })
     end
-    return respond("200 OK", { ok = true, path = path, width = 320, height = 240, phase_ms = phase_ms })
+    return respond("200 OK", {
+      ok = true, path = path, width = 320, height = 240,
+      phase_ms = phase_ms, blink_opacity = captured_blink_opacity,
+      x = captured_x, y = captured_y,
+    })
   end
 
   local function register(method, suffix, handler)

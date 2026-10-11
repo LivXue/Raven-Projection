@@ -13,7 +13,7 @@ The app animates locally and keeps running after the computer disconnects.
 
 - Transparent character artwork on a pure black canvas for glass projection.
 - A gentle idle loop with vertical floating, sideways sway, gold sparkles,
-  and a breathing status indicator.
+  a breathing status indicator, and a short natural blink.
 - Six states: `idle`, `thinking`, `working`, `waiting`, `error`, and `offline`.
 - Optional progress from 0 to 100. Non-idle states pause the idle animation.
 - An HTTP API and a dependency-free Python installation/control client.
@@ -116,15 +116,28 @@ To rebuild the included assets on Windows:
 
 ```powershell
 powershell -NoProfile -File .\build-assets.ps1 -ImagePath .\assets\raven-chibi-transparent.png
+powershell -NoProfile -File .\build-blink-assets.ps1
 uv run --no-project python raven_screen.py --device 192.168.1.100 install
 ```
 
 See [artwork notes](docs/artwork.md) for the image editing prompt.
+The [blink artwork notes](docs/blink-artwork.md) describe the aligned
+closed-eye source and the small eyelid overlay extracted from it. Those
+regions are specific to the bundled artwork; replacing the character
+requires a matching blink source and region coordinates.
 
-The 4.8-second idle loop uses a 50 ms timer, floats the character by up to
-4 pixels, and sways 2 pixels to either side. Playback reuses the portrait
+The 4.8-second idle loop uses a 50 ms timer and follows a smooth figure-eight
+path. It sways 24 pixels to either side and bobs 6 pixels above and below
+its resting position: 48 pixels of horizontal travel and 12 vertically.
+Gold sparkles drift alongside the movement. The complete character stays
+inside the display area above the status bar. Playback reuses the portrait
 and makes no per-frame SD-card writes. A small canvas keeps the status
 bar visible in snapshots. Exiting releases the animation timer.
+
+Each loop includes a 250 ms blink: closing for 50 ms, holding for 100 ms,
+and reopening for 100 ms. Only an eye overlay changes opacity; the original
+portrait remains in place. Every non-idle state restores open eyes.
+`animation.blink_opacity` reports 0 for open eyes and 255 for closed eyes.
 
 To capture an exact idle pose, use `--phase-ms` from 0 through 4799:
 
@@ -132,13 +145,15 @@ To capture an exact idle pose, use `--phase-ms` from 0 through 4799:
 uv run --no-project python raven_screen.py --device 192.168.1.100 snapshot --phase-ms 1200 --output idle.png
 ```
 
-To regenerate the GIF preview from 24 exact device-rendered frames:
+To regenerate the GIF preview from exact device-rendered frames:
 
 ```shell
 uv run --no-project --with imageio-ffmpeg python capture_idle_preview.py --device 192.168.1.100
 ```
 
-The preview is 5 fps; the device uses a nominal 20 timer ticks per second.
+The preview samples the slow motion at 5 fps and includes extra 50 ms
+keyframes around the blink, producing 28 frames per loop. The device uses
+a nominal 20 timer ticks per second.
 Frame capture writes screenshots to the SD card and briefly interrupts
 visible playback. Normal animation does not have this capture overhead.
 
@@ -150,6 +165,7 @@ assets/                   Full-resolution transparent artwork
 docs/                     Idle preview and artwork notes
 raven_screen.py           Installation, state updates, and snapshots
 build-assets.ps1          Alpha-preserving image resize tool
+build-blink-assets.ps1    Aligned eyelid-overlay extraction tool
 capture_idle_preview.py    Optional device-frame GIF capture tool
 ```
 
@@ -159,9 +175,9 @@ archives are local outputs and are ignored by Git.
 ## Verification
 
 The device app has been checked on firmware `1.212` for all six states,
-progress handling, invalid input rejection, animation pause/resume, two
-exit/relaunch cycles, and snapshot capture. Its preview contains 24
-distinct rendered frames spanning 4800 ms.
+progress handling, invalid input rejection, animation pause/resume,
+exit/relaunch, and snapshot capture. The GIF preserves the complete
+4800 ms loop, including the brief blink.
 
 The installation/control tool uses only Python's standard library.
 The optional GIF capture tool additionally uses `imageio-ffmpeg` via `uv`.

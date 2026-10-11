@@ -102,10 +102,11 @@ class Device:
 
 def install(device: Device) -> dict:
     """Upload only this app's files, verify every byte, and launch it."""
-    names = ("raven.png", "main.png", "main.lua", "app.info")
+    names = ("raven.png", "raven-blink.png", "main.png", "main.lua", "app.info")
     for name in names:
         if not (PACKAGE / name).is_file():
-            raise RuntimeError(f"Missing {name}; run build-assets.ps1 first")
+            builder = "build-blink-assets.ps1" if name == "raven-blink.png" else "build-assets.ps1"
+            raise RuntimeError(f"Missing {name}; run {builder} first")
 
     current = device.api("/api/system/state")
     listing_path = "/api/system/fs/list?" + urlencode({"path": "/sd/apps"})
@@ -116,8 +117,14 @@ def install(device: Device) -> dict:
             raise RuntimeError("The device app directory belongs to a different app")
         backup = Path(__file__).resolve().parent / "backups" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         backup.mkdir(parents=True)
+        existing_files = {
+            entry["name"] for entry in device.api(
+                "/api/system/fs/list?" + urlencode({"path": REMOTE_DIRECTORY})
+            )["entries"] if not entry.get("is_dir")
+        }
         for name in names:
-            (backup / name).write_bytes(device.file(f"{REMOTE_DIRECTORY}/{name}"))
+            if name in existing_files:
+                (backup / name).write_bytes(device.file(f"{REMOTE_DIRECTORY}/{name}"))
         print(f"Saved previous package to {backup}")
     else:
         device.api("/api/system/fs/mkdir?" + urlencode({"path": REMOTE_DIRECTORY}), "POST")

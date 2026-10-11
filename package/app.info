@@ -7,4 +7,4 @@ entry = main.lua
 allow_webui = true
 icon = main.png
 description = Raven portrait and live status display
-version = 0.2.0
+version = 0.3.1
